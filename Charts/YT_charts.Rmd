@@ -1,0 +1,142 @@
+---
+title: "YT_charts"
+output: html_document
+date: "2024-07-28"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## STEP 01: Import desired YouTube data set
+
+```{r, echo=FALSE}
+
+library(tidyverse)
+library(dplyr)
+
+filename <- as.character(file.choose()) %>% 
+  basename()
+
+data <- read_csv(filename)
+
+```
+
+
+## STEP 02: Generate bar graph of most-frequently occuring dictionary terms in FILTERED data set
+
+```{r, echo=FALSE}
+
+library(highcharter)
+
+text_stage <- data %>% #Puts data into a tidy format, removes extra spacing characters
+  mutate(match_term = trimws(match_term)) %>% 
+  select(authorDisplayName, publishedAt, match_term) %>% 
+  mutate(match_term = str_replace_all(match_term, "c\\(", "")) %>% 
+  mutate(match_term = str_replace_all(match_term, "\\)", "")) %>% 
+  mutate(match_term = str_replace_all(match_term, "\\\\", "")) %>% 
+  mutate(match_term = str_replace_all(match_term, "\"", "")) %>% 
+  mutate(match_term = str_split(match_term, ",")) %>%
+  unnest(match_term) %>% 
+  mutate(match_term = case_when(match_term == "character(0)" ~ "",
+                                match_term != "character(0)" ~ match_term)) %>%
+  filter(!is.na(match_term))
+
+freq_stage <- text_stage %>% #Counts match term occurrences 
+  mutate(match_term = trimws(match_term)) %>%
+  group_by(match_term) %>% 
+  summarize(N = n()) %>% 
+  mutate(freq = N) %>%
+  ungroup() %>% 
+  arrange(desc(freq)) 
+
+freq_stage <- freq_stage %>% #Generates term freqs
+  filter(!is.na(match_term)) %>% 
+  mutate(match_word = factor(match_term, match_term)) %>%
+  arrange(desc(freq)) %>% 
+  head(10)
+
+
+library(htmlwidgets)
+
+filename_short <- tools::file_path_sans_ext(filename)
+
+hc1 <- freq_stage %>% hchart("column", hcaes(x = reorder(match_term, freq), y = freq)) %>% 
+  hc_title(text = paste("Term Frequency Chart"),
+           style = list(fontSize = "25px")) %>% 
+  hc_yAxis(labels = list(style = list(fontSize="20px")),
+    title =list(text="Frequency of Occurence",
+                style = list(fontSize = "20px"))) %>% 
+  hc_xAxis(labels = list(style = list(fontSize="20px")), 
+           title = list(text="Dictionary Term",
+                        style = list(fontSize = "20px"))) %>% 
+  hc_add_theme(hc_theme_flat(colors = c("red", "blue", "green"))) 
+
+saveWidget(hc, file=paste(filename_short, "_TERMS", ".html", sep=""))
+
+hc1
+
+```
+
+
+## STEP 03: Generate wordcloud object from the textOriginal column (i.e., display most-used words not in dictionary) in raw or FILTERED data sets
+
+```{r}
+
+library(wordcloud)
+library(RColorBrewer)
+library(tidytext)
+library(dplyr)
+
+plt <- brewer.pal(8, "Set2") #settings for color palette
+
+commentcloud <- data %>% 
+  unnest_tokens(word, textOriginal) %>% 
+  anti_join(stop_words) %>%
+  count(word) %>% 
+  arrange(desc(n)) %>%
+  top_n(n = 100)
+
+wordcloud(words=commentcloud$word, #Generates word cloud for textOriginal
+          freq=commentcloud$n,
+          scale=c(3, 0.5), #Largest font size to smallest
+          min.freq = 2, #Only displays words that appear X number of times
+          random.order = FALSE, #Highest occurrences are larger font and at the center
+          color=plt,
+          fixed.asp = TRUE)
+
+```
+
+
+## STEP 03: Generate occurence-over-time charts for top n match terms
+
+```{r}
+
+extantterms <- freq_stage$match_term
+n_days <- 10
+
+for(i in freq_stage$match_term){
+time_stage <- text_stage[,2:3]
+  time_stage$match_term <- trimws(time_stage$match_term)
+  time_stage1 <- time_stage[which(time_stage$match_term == i),]
+  time_stage1$day <- lubridate::floor_date(time_stage1$publishedAt, unit="day") %>% as.character()
+freq <- count(time_stage1, day) %>% 
+  arrange(desc(day)) %>%
+  head(n_days)
+hc2 <- freq %>% 
+  hchart("column", hcaes(x = day, y = n)) %>%
+  hc_title(text = sprintf("Occurence of Term '%s' Over Time", i),
+           style = list(fontSize = "25px")) %>%
+  hc_yAxis(labels = list(style = list(fontSize="20px")),
+    title =list(text="Frequency of Occurence",
+                style = list(fontSize = "20px"))) %>% 
+  hc_xAxis(labels = list(style = list(fontSize="20px")), 
+           title = list(text="Time Period",
+                        style = list(fontSize = "20px"))) %>%
+  hc_add_theme(hc_theme_flat(colors = "blue"))
+
+saveWidget(hc2, file=paste(filename_short, "_", i, "_TIMES", ".html", sep=""))
+  }
+
+```
